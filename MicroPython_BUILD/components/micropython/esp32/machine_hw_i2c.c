@@ -24,6 +24,8 @@
  * THE SOFTWARE.
  */
 
+#include "machine_hw_i2c.h"
+
 #include <stdint.h>
 #include <string.h>
 
@@ -52,26 +54,6 @@
 #define I2C_SLAVE_CBTYPE_ADDR       1
 #define I2C_SLAVE_CBTYPE_DATA_RX    2
 #define I2C_SLAVE_CBTYPE_DATA_TX    4
-
-typedef struct _mp_machine_i2c_obj_t {
-    mp_obj_base_t base;
-    uint32_t speed;
-    uint8_t mode;
-    uint8_t scl;
-    uint8_t sda;
-    int8_t bus_id;
-    i2c_cmd_handle_t cmd;
-    uint16_t rx_buflen;			// low level commands receive buffer length
-    uint16_t rx_bufidx;			// low level commands receive buffer index
-    uint8_t *rx_data;			// low level commands receive buffer
-    int8_t slave_addr;			// slave only, slave 8-bit address
-    uint16_t slave_buflen;		// slave only, data buffer length
-    uint16_t slave_rolen;       // slave only, read only buffer area length
-    uint32_t *slave_cb;	        // slave only, slave callback function
-    bool slave_busy;
-    uint8_t slave_cbtype;
-} mp_machine_i2c_obj_t;
-
 
 extern int MainTaskCore;
 
@@ -121,7 +103,7 @@ STATIC esp_err_t i2c_init_slave (mp_machine_i2c_obj_t *i2c_obj, bool busy)
 }
 
 //------------------------------------------------------------------------------------------------------------------------------------------------------------
-STATIC int mp_i2c_master_write(mp_machine_i2c_obj_t *i2c_obj, uint16_t slave_addr, uint8_t memwrite, uint32_t memaddr, uint8_t *data, uint16_t len, bool stop)
+int mp_i2c_master_write(mp_machine_i2c_obj_t *i2c_obj, uint16_t slave_addr, uint8_t memwrite, uint32_t memaddr, uint8_t *data, uint16_t len, bool stop)
 {
 	esp_err_t ret = ESP_FAIL;
 
@@ -944,6 +926,11 @@ STATIC mp_obj_t mp_machine_i2c_writeto_mem(size_t n_args, const mp_obj_t *pos_ar
         mp_buffer_info_t bufinfo;
         mp_get_buffer_raise(args[ARG_buf].u_obj, &bufinfo, MP_BUFFER_READ);
         buf = get_buffer(bufinfo.buf, bufinfo.len);
+
+        for (uint8_t i = 0; i < len; ++i) {
+            printf("buff %u: %u\n", i, buf[i]);
+        }
+
         len = bufinfo.len;
     }
 

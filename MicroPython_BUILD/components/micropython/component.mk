@@ -184,6 +184,7 @@ SRC_C =  $(addprefix esp32/,\
 	machine_dht.c \
 	machine_ow.c \
 	cbots.c \
+	spider.c \
 	)
 
 ifdef CONFIG_MICROPY_USE_DISPLAY

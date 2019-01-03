@@ -23,6 +23,10 @@
 #ifndef INC_CBOTS_H
 #define INC_CBOTS_H
 
+#include <stdint.h>
+
 #define NUM_SERVOS 16
+
+void set_servo(uint8_t idx, float angle);
 
 #endif  // INC_CBOTS_H

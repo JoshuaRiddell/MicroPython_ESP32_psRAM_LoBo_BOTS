@@ -20,6 +20,8 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+#include "cbots.h"
+
 #include "py/nlr.h"
 #include "py/obj.h"
 #include "py/runtime.h"
@@ -91,14 +93,8 @@ STATIC MP_DEFINE_CONST_FUN_OBJ_1(cbots_set_i2c_obj, cbots_set_i2c);
 
 STATIC mp_obj_t cbots_set_servo_zero_pos(mp_obj_t zero_pos_list) {
     mp_obj_t *list_items;
-    size_t len;
 
-    mp_obj_get_array(zero_pos_list, &len, &list_items);
-
-    if (len != NUM_SERVOS) {
-        // list didn't have correct number of values
-        mp_raise_ValueError("Incorrect number of values in list.");
-    }
+    mp_obj_get_array_fixed_n(zero_pos_list, NUM_SERVOS, &list_items);
 
     // unpack list
     for (uint8_t i = 0; i < NUM_SERVOS; ++i) {

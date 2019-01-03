@@ -84,12 +84,18 @@ static float legs[NUM_LEGS][3] = {
 
 static float walk_t0 = 0;  // time at beginning of walk
 static float walk_tn = 0;  // current time in walk
+
+// variables storing state of body and walking
+static float body_x, body_y, body_z, body_roll, body_pitch, body_yaw;
+static float walk_x_rate, walk_y_rate, walk_yaw_rate;
+
+// walk running parameters
 static float dt = 0.1;
 static float leg_freq = 0.5;
 
-static float body_x, body_y, body_z, body_roll, body_pitch, body_yaw;
+//--------------------------------------------------------------
 
-
+// rot2d rotates the point x,y about the origin by a radians
 void rot2d(float a, float *x, float *y) {
     // calculate trig functions
     float sa = sin(a);
@@ -100,6 +106,11 @@ void rot2d(float a, float *x, float *y) {
     *y = *x * sa + *y * ca;
 }
 
+//--------------------------------------------------------------
+
+// body_to_leg converts the leg coordinate x,y,z from body frame to local
+//              leg frame given the index of the leg. It applies the body
+//              frame rotations and translations.
 void body_to_leg(uint8_t idx, float *x, float *y, float *z) {
     // load the leg coordinates and apply body offset
     *x = legs[idx][0] - body_x;
@@ -111,12 +122,17 @@ void body_to_leg(uint8_t idx, float *x, float *y, float *z) {
     rot2d(body_pitch, z, y);
     rot2d(-body_yaw, x, y);
 
-    // apply offsets due to frame
+    // apply offsets due to mechanical offsets of leg
     *x -= body_offsets[idx][0];
     *y -= body_offsets[idx][1];
 }
 
-void leg_ik(float x, float y, float z, float *t1_ret, float *t2_ret, float *t3_ret) {
+//--------------------------------------------------------------
+
+// leg_ik converts the local leg coordinate x,y,z into a triple of angles
+//          to be sent to the leg servos.
+void leg_ik(float x, float y, float z,
+            float *t1_ret, float *t2_ret, float *t3_ret) {
     float t1, t2, t3;
 
     // root angle
@@ -144,6 +160,10 @@ void leg_ik(float x, float y, float z, float *t1_ret, float *t2_ret, float *t3_r
     *t3_ret = t3;
 }
 
+//--------------------------------------------------------------
+
+// set_leg sets the servos in the leg such that the tip of the leg is at the
+//          local coordinate x,y,z.
 void set_leg(uint8_t id, float x, float y, float z) {
     float t1, t2, t3;
     
@@ -157,6 +177,9 @@ void set_leg(uint8_t id, float x, float y, float z) {
     set_servo(r_id, t1 * angle_signs[r_id]);
 }
 
+//--------------------------------------------------------------
+
+// update_body updates all the legs in the body.
 void update_body() {
     float x, y, z;
 
@@ -173,6 +196,10 @@ void update_body() {
     set_leg(3, -x, -y, z);
 }
 
+//--------------------------------------------------------------
+
+// change_body_for_walk alters the body position and leg positions to result in
+//                      crawl walking behaviour.
 void change_body_for_walk(float t, float x_rate, float y_rate, float yaw_rate) {
     float tf = (float)t;
 
@@ -207,35 +234,80 @@ void change_body_for_walk(float t, float x_rate, float y_rate, float yaw_rate) {
     }
 }
 
-void update_walk(float x_rate, float y_rate, float yaw_rate) {
+//--------------------------------------------------------------
+
+// update_walk periodically updates the body for walking timesteps.
+void update_walk(void) {
     walk_tn += dt;
     float t = walk_tn - walk_t0;
 
-    change_body_for_walk(t, x_rate, y_rate, yaw_rate);
+    change_body_for_walk(t, walk_x_rate, walk_y_rate, walk_yaw_rate);
     update_body();
 }
 
 //--------------------------------------------------------------
 
-STATIC mp_obj_t cbots_update_walk(mp_obj_t x_rate, mp_obj_t y_rate, mp_obj_t yaw_rate) {
-    float x_rate_f = mp_obj_get_float(x_rate);
-    float y_rate_f = mp_obj_get_float(y_rate);
-    float yaw_rate_f = mp_obj_get_float(yaw_rate);
-
-    update_walk(x_rate_f, y_rate_f, yaw_rate_f);
+STATIC mp_obj_t cspider_update_walk_params(mp_obj_t x_rate, mp_obj_t y_rate, mp_obj_t yaw_rate) {
+    walk_x_rate = mp_obj_get_float(x_rate);
+    walk_y_rate = mp_obj_get_float(y_rate);
+    walk_yaw_rate = mp_obj_get_float(yaw_rate);
 
     return mp_const_none;
 }
-STATIC MP_DEFINE_CONST_FUN_OBJ_3(cbots_update_walk_obj, cbots_update_walk);
+STATIC MP_DEFINE_CONST_FUN_OBJ_3(cspider_update_walk_params_obj, cspider_update_walk_params);
 
 //--------------------------------------------------------------
 
-STATIC mp_obj_t cbots_begin_walk(mp_obj_t input_dt, mp_obj_t input_freq) {
+STATIC mp_obj_t cspider_update_walk() {
+    update_walk();
+
+    return mp_const_none;
+}
+STATIC MP_DEFINE_CONST_FUN_OBJ_0(cspider_update_walk_obj, cspider_update_walk);
+
+//--------------------------------------------------------------
+
+STATIC mp_obj_t cspider_set_legs0(mp_obj_t legs0_list) {
+    mp_obj_t *leg_coordinates;
+    mp_obj_t *coordinate;
+
+    mp_obj_get_array_fixed_n(legs0_list, NUM_LEGS, &leg_coordinates);
+
+    // // unpack each leg
+    for (uint8_t i = 0; i < NUM_LEGS; ++i) {
+        // get xyz coordinate
+        mp_obj_get_array_fixed_n(leg_coordinates[i], 3, &coordinate);
+
+        // load in each float
+        for (uint8_t j = 0; j < 3; ++j) {
+            float val = mp_obj_get_float(coordinate[j]);
+
+            // save this as the base coordinate value
+            legs0[i][j] = val;
+            
+            // also reset the running leg position while we're here
+            legs[i][j] = val;
+        }
+    }
+
+    update_body();
+
+    return mp_const_none;
+}
+STATIC MP_DEFINE_CONST_FUN_OBJ_1(cspider_set_legs0_obj, cspider_set_legs0);
+
+//--------------------------------------------------------------
+
+STATIC mp_obj_t cspider_begin_walk(mp_obj_t input_dt, mp_obj_t input_freq) {
     walk_t0 = platform_tick_get_ms();
     walk_tn = walk_t0;
 
     dt = mp_obj_get_float(input_dt);
     leg_freq = mp_obj_get_float(input_freq);
+
+    walk_x_rate = 0;
+    walk_y_rate = 0;
+    walk_yaw_rate = 0;
 
     body_z = 50;
 
@@ -243,25 +315,85 @@ STATIC mp_obj_t cbots_begin_walk(mp_obj_t input_dt, mp_obj_t input_freq) {
 
     return mp_const_none;
 }
-STATIC MP_DEFINE_CONST_FUN_OBJ_2(cbots_begin_walk_obj, cbots_begin_walk);
+STATIC MP_DEFINE_CONST_FUN_OBJ_2(cspider_begin_walk_obj, cspider_begin_walk);
 
 //--------------------------------------------------------------
 
-STATIC const mp_map_elem_t cbots_globals_table[] = {
+STATIC mp_obj_t cspider_xyz(mp_obj_t x, mp_obj_t y, mp_obj_t z) {
+    body_x = mp_obj_get_float(x);
+    body_y = mp_obj_get_float(y);
+    body_z = mp_obj_get_float(z);
+
+    update_body();
+
+    return mp_const_none;
+}
+STATIC MP_DEFINE_CONST_FUN_OBJ_3(cspider_xyz_obj, cspider_xyz);
+
+//--------------------------------------------------------------
+
+STATIC mp_obj_t cspider_rpy(mp_obj_t roll, mp_obj_t pitch, mp_obj_t yaw) {
+    body_roll = mp_obj_get_float(roll);
+    body_pitch = mp_obj_get_float(pitch);
+    body_yaw = mp_obj_get_float(yaw);
+    
+    update_body();
+
+    return mp_const_none;
+}
+STATIC MP_DEFINE_CONST_FUN_OBJ_3(cspider_rpy_obj, cspider_rpy);
+
+//--------------------------------------------------------------
+
+STATIC mp_obj_t cspider_xyzrpy(size_t n_args, const mp_obj_t *args) {
+    body_x = mp_obj_get_float(args[0]);
+    body_y = mp_obj_get_float(args[1]);
+    body_z = mp_obj_get_float(args[2]);
+
+    body_roll = mp_obj_get_float(args[3]);
+    body_pitch = mp_obj_get_float(args[4]);
+    body_yaw = mp_obj_get_float(args[5]);
+
+    update_body();
+
+    return mp_const_none;
+}
+STATIC MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(cspider_xyzrpy_obj, 4, 4, cspider_xyzrpy);
+
+//--------------------------------------------------------------
+
+STATIC mp_obj_t cspider_update_body(void) {
+    update_body();
+
+    return mp_const_none;
+}
+STATIC MP_DEFINE_CONST_FUN_OBJ_0(cspider_update_body_obj, cspider_update_body);
+
+//--------------------------------------------------------------
+
+STATIC const mp_map_elem_t cspider_globals_table[] = {
     { MP_OBJ_NEW_QSTR(MP_QSTR___name__), MP_OBJ_NEW_QSTR(MP_QSTR_cspider) },
 
     // walk functions
-    { MP_OBJ_NEW_QSTR(MP_QSTR_begin_walk), (mp_obj_t)&cbots_begin_walk_obj },
-    { MP_OBJ_NEW_QSTR(MP_QSTR_update_walk), (mp_obj_t)&cbots_update_walk_obj },
+    { MP_OBJ_NEW_QSTR(MP_QSTR_update_walk_params), (mp_obj_t)&cspider_update_walk_params_obj },
+    { MP_OBJ_NEW_QSTR(MP_QSTR_update_walk), (mp_obj_t)&cspider_update_walk_obj },
+    { MP_OBJ_NEW_QSTR(MP_QSTR_set_legs0), (mp_obj_t)&cspider_set_legs0_obj },
+    { MP_OBJ_NEW_QSTR(MP_QSTR_begin_walk), (mp_obj_t)&cspider_begin_walk_obj },
+
+    // body positioning functions
+    { MP_OBJ_NEW_QSTR(MP_QSTR_xyz), (mp_obj_t)&cspider_xyz_obj },
+    { MP_OBJ_NEW_QSTR(MP_QSTR_rpy), (mp_obj_t)&cspider_rpy_obj },
+    { MP_OBJ_NEW_QSTR(MP_QSTR_xyzrpy), (mp_obj_t)&cspider_xyzrpy_obj },
+    { MP_OBJ_NEW_QSTR(MP_QSTR_update_body), (mp_obj_t)&cspider_update_body_obj },
 };
 
 STATIC MP_DEFINE_CONST_DICT (
-    mp_module_cbots_globals,
-    cbots_globals_table
+    mp_module_cspider_globals,
+    cspider_globals_table
 );
 
-const mp_obj_module_t mp_module_cbots = {
+const mp_obj_module_t mp_module_cspider = {
     .base = { &mp_type_module },
-    .globals = (mp_obj_dict_t*)&mp_module_cbots_globals,
+    .globals = (mp_obj_dict_t*)&mp_module_cspider_globals,
 };
 

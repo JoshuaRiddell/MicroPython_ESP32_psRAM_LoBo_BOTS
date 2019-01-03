@@ -282,6 +282,7 @@ extern const struct _mp_obj_module_t mp_module_machine;
 extern const struct _mp_obj_module_t mp_module_network;
 extern const struct _mp_obj_module_t mp_module_ymodem;
 extern const struct _mp_obj_module_t mp_module_cbots;
+extern const struct _mp_obj_module_t mp_module_cspider;
 
 #ifdef CONFIG_MICROPY_USE_REQUESTS
 extern const struct _mp_obj_module_t mp_module_requests;

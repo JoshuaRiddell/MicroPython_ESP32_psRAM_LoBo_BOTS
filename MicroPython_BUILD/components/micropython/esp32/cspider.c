@@ -46,7 +46,7 @@
 #define BW   47
 #define BL   88
 
-#define LEAN_AMOUNT 15
+#define LEG_STEP_THRESHOLD 30.
 
 //--------------------------------------------------------------
 
@@ -66,23 +66,12 @@ static const int8_t angle_signs[NUM_SERVOS] = {
 
 //--------------------------------------------------------------
 
-static float legs0[NUM_LEGS][3] = {
-    {90, -70, -35},
-    {90, 70, -35},
-    {-90, 70, -35},
-    {-90, -70, -35},
-};
-
-static float legs[NUM_LEGS][3] = {
-    {90, -70, -35},
-    {90, 70, -35},
-    {-90, 70, -35},
-    {-90, -70, -35},
-};
+// these are set via the python function cspider_set_legs0
+static float legs0[NUM_LEGS][3];
+static float legs[NUM_LEGS][3];
 
 //--------------------------------------------------------------
 
-static float walk_t0 = 0;  // time at beginning of walk
 static float walk_tn = 0;  // current time in walk
 
 // variables storing state of body and walking
@@ -92,6 +81,22 @@ static float walk_x_rate, walk_y_rate, walk_yaw_rate;
 // walk running parameters
 static float dt = 0.1;
 static float leg_freq = 0.5;
+
+typedef enum {
+    STATE_STEP_IDLE,
+    STATE_STEP_MOVING,
+    STATE_STEP_STEPPING,
+} step_state_t;
+
+static step_state_t step_state;
+static int8_t step_leg;
+static float step_state_t0;
+static float step_last_tn;
+
+static const float move_time = 0.5;
+static const float step_time = 0.5;
+
+static const float step_period = 1;
 
 //--------------------------------------------------------------
 
@@ -198,63 +203,182 @@ void update_body() {
 
 //--------------------------------------------------------------
 
-// change_body_for_walk alters the body position and leg positions to result in
-//                      crawl walking behaviour.
-void change_body_for_walk(float t, float x_rate, float y_rate, float yaw_rate) {
-    float tf = (float)t;
+void get_centroid(float *x, float *y) {
+    float x_sum = 0;
+    float y_sum = 0;
 
-    // get body position in x,y
-    float x = LEAN_AMOUNT * cos(tf * 2 * M_PI * leg_freq);
-    float y = LEAN_AMOUNT * cos(tf * 2 * M_PI * leg_freq + M_PI/2);
-
-    // write position to body
-    body_x = x;
-    body_y = y;
-
-    // write leg positions
     for (uint8_t i = 0; i < NUM_LEGS; ++i) {
-        // handle periodic lifting of legs in phase with body lean
-        float z = 150 * cos(-tf * 2 * M_PI * leg_freq - 3*M_PI/4 - M_PI/2 * i) - 120;
-        z = fmax(0., z);
-        
-        legs[i][2] = legs0[i][2] + z;
-
-        // reset leg position when it is high enough
-        if (z > 20) {
-            legs[i][0] = legs0[i][0];
-            legs[i][1] = legs0[i][1];
+        if (i == step_leg) {
+            continue;
         }
 
-        // apply translational shift to move in the x,y directions
-        legs[i][0] -= x_rate * dt;
-        legs[i][1] -= y_rate * dt;
-
-        // apply rotational shift to yaw in each direction
-        rot2d(yaw_rate*dt, &(legs[i][0]), &(legs[i][1]));
+        x_sum += legs[i][0];
+        y_sum += legs[i][1];
     }
+
+    *x = x_sum / 3;
+    *y = y_sum / 3;
 }
 
 //--------------------------------------------------------------
 
+int8_t get_next_leg_index(void) {
+    float max_leg_diff = 0;
+    uint8_t max_leg_diff_idx = 0;
+
+    for (uint8_t i = 0; i < NUM_LEGS; ++i) {
+        float r = powf(powf(legs[i][0] - legs0[i][0], 2.) + powf(legs[i][1] - legs0[i][1], 2.), 0.5);
+
+        if (r > max_leg_diff) {
+            max_leg_diff = r;
+            max_leg_diff_idx = i;
+        }
+    }
+
+    if (max_leg_diff < LEG_STEP_THRESHOLD) {
+        return -1;
+    }
+
+    return max_leg_diff_idx;
+}
+
+//--------------------------------------------------------------
+
+inline float sign(float x1, float y1, float x2, float y2, float x3, float y3) {
+    return (x1 - x3) * (y2 - y3) - (x2 - x3) * (y1- y3);
+}
+
+//--------------------------------------------------------------
+
+bool cg_in_legs(void) {
+    uint8_t ids[3];
+
+    uint8_t *tmp = ids;
+    for (uint8_t i = 0; i < NUM_LEGS; ++i) {
+        if (i == step_leg) {
+            continue;
+        }
+
+        *tmp = i;
+        ++tmp;
+    }
+
+    float d1 = sign(body_x, body_y, legs[ids[0]][0], legs[ids[0]][1], legs[ids[1]][0], legs[ids[1]][1]);
+    float d2 = sign(body_x, body_y, legs[ids[1]][0], legs[ids[1]][1], legs[ids[2]][0], legs[ids[2]][1]);
+    float d3 = sign(body_x, body_y, legs[ids[2]][0], legs[ids[2]][1], legs[ids[0]][0], legs[ids[0]][1]);
+
+    bool has_neg = (d1 < 0) || (d2 < 0) || (d3 < 0);
+    bool has_pos = (d1 > 0) || (d2 > 0) || (d3 > 0);
+
+    return !(has_neg && has_pos);
+}
+
+//--------------------------------------------------------------
+
+static float n = 0;
+
 // update_walk periodically updates the body for walking timesteps.
 void update_walk(void) {
     walk_tn += dt;
-    float t = walk_tn - walk_t0;
 
-    change_body_for_walk(t, walk_x_rate, walk_y_rate, walk_yaw_rate);
+    float state_tn = walk_tn - step_state_t0;
+
+    float z, centroid_x, centroid_y;
+
+    switch (step_state) {
+        case STATE_STEP_IDLE:
+            if (walk_tn - step_last_tn >= step_period) {
+                step_leg = get_next_leg_index();
+
+                if (step_leg != -1) {
+                    step_state = STATE_STEP_MOVING;
+                    step_state_t0 = walk_tn;
+                    n = 0;
+                }
+            }
+
+            // update body position to move towards the centre
+            if (abs(body_x) < 1) {
+                body_x = 0;
+            }
+
+            if (abs(body_y) < 1) {
+                body_y = 0;
+            }
+
+            body_x -= body_x * (state_tn / move_time);
+            body_y -= body_y * (state_tn / move_time);
+
+            break;
+        case STATE_STEP_MOVING:
+            get_centroid(&centroid_x, &centroid_y);
+
+            // update body position to move towards centroid
+            body_x += (centroid_x - body_x) * (state_tn / move_time);
+            body_y += (centroid_y - body_y) * (state_tn / move_time);
+
+            if (cg_in_legs()) {
+                n += 1;
+
+                if (n > 2) {
+                    step_state = STATE_STEP_STEPPING;
+                    step_state_t0 = walk_tn;
+                }
+            }
+
+            break;
+        case STATE_STEP_STEPPING:
+            // lift leg
+            z = 70 * powf(sin(state_tn * M_PI / step_time), 2);
+            legs[step_leg][2] = legs0[step_leg][2] + z;
+
+            // if leg is high enough then reset position
+            if (z > 40) {
+                legs[step_leg][0] = legs0[step_leg][0];
+                legs[step_leg][1] = legs0[step_leg][1];
+            }
+
+            // keep body on centroid
+            // centroid_x, centroid_y = self.get_centroid()
+            // self.x = centroid_x
+            // self.y = centroid_y
+
+            if (state_tn >= step_time) {
+                step_state = STATE_STEP_IDLE;
+                step_state_t0 = walk_tn;
+            }
+
+            break;
+    }
+
+    // write leg positions
+    for (uint8_t i = 0; i < NUM_LEGS; ++i) {
+        // reset leg position when it is high enough
+        if (legs[i][2] > 30) {
+            continue;
+        }
+
+        // apply translational shift to move in the x,y directions
+        legs[i][0] -= walk_x_rate * dt;
+        legs[i][1] -= walk_y_rate * dt;
+
+        // apply rotational shift to yaw in each direction
+        rot2d(walk_yaw_rate*dt, &(legs[i][0]), &(legs[i][1]));
+    }
+
     update_body();
 }
 
 //--------------------------------------------------------------
 
-STATIC mp_obj_t cspider_update_walk_params(mp_obj_t x_rate, mp_obj_t y_rate, mp_obj_t yaw_rate) {
+STATIC mp_obj_t cspider_update_walk_rates(mp_obj_t x_rate, mp_obj_t y_rate, mp_obj_t yaw_rate) {
     walk_x_rate = mp_obj_get_float(x_rate);
     walk_y_rate = mp_obj_get_float(y_rate);
     walk_yaw_rate = mp_obj_get_float(yaw_rate);
 
     return mp_const_none;
 }
-STATIC MP_DEFINE_CONST_FUN_OBJ_3(cspider_update_walk_params_obj, cspider_update_walk_params);
+STATIC MP_DEFINE_CONST_FUN_OBJ_3(cspider_update_walk_rates_obj, cspider_update_walk_rates);
 
 //--------------------------------------------------------------
 
@@ -290,8 +414,6 @@ STATIC mp_obj_t cspider_set_legs0(mp_obj_t legs0_list) {
         }
     }
 
-    update_body();
-
     return mp_const_none;
 }
 STATIC MP_DEFINE_CONST_FUN_OBJ_1(cspider_set_legs0_obj, cspider_set_legs0);
@@ -299,8 +421,12 @@ STATIC MP_DEFINE_CONST_FUN_OBJ_1(cspider_set_legs0_obj, cspider_set_legs0);
 //--------------------------------------------------------------
 
 STATIC mp_obj_t cspider_begin_walk(mp_obj_t input_dt, mp_obj_t input_freq) {
-    walk_t0 = platform_tick_get_ms();
-    walk_tn = walk_t0;
+    walk_tn = 0;
+
+    step_state_t0 = 0;
+    step_state = STATE_STEP_IDLE;
+    step_leg = 0;
+    step_last_tn = 0;
 
     dt = mp_obj_get_float(input_dt);
     leg_freq = mp_obj_get_float(input_freq);
@@ -316,6 +442,24 @@ STATIC mp_obj_t cspider_begin_walk(mp_obj_t input_dt, mp_obj_t input_freq) {
     return mp_const_none;
 }
 STATIC MP_DEFINE_CONST_FUN_OBJ_2(cspider_begin_walk_obj, cspider_begin_walk);
+
+//--------------------------------------------------------------
+
+STATIC mp_obj_t cspider_end_walk(void) {
+    body_x = 0;
+    body_y = 0;
+
+    for (uint8_t i = 0; i < NUM_LEGS; ++i) {
+        for (uint8_t j = 0; j < 3; ++j) {
+            legs[i][j] = legs0[i][j];
+        }
+    }
+
+    update_body();
+
+    return mp_const_none;
+}
+STATIC MP_DEFINE_CONST_FUN_OBJ_0(cspider_end_walk_obj, cspider_end_walk);
 
 //--------------------------------------------------------------
 
@@ -358,7 +502,7 @@ STATIC mp_obj_t cspider_xyzrpy(size_t n_args, const mp_obj_t *args) {
 
     return mp_const_none;
 }
-STATIC MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(cspider_xyzrpy_obj, 4, 4, cspider_xyzrpy);
+STATIC MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(cspider_xyzrpy_obj, 6, 6, cspider_xyzrpy);
 
 //--------------------------------------------------------------
 
@@ -375,10 +519,11 @@ STATIC const mp_map_elem_t cspider_globals_table[] = {
     { MP_OBJ_NEW_QSTR(MP_QSTR___name__), MP_OBJ_NEW_QSTR(MP_QSTR_cspider) },
 
     // walk functions
-    { MP_OBJ_NEW_QSTR(MP_QSTR_update_walk_params), (mp_obj_t)&cspider_update_walk_params_obj },
+    { MP_OBJ_NEW_QSTR(MP_QSTR_update_walk_rates), (mp_obj_t)&cspider_update_walk_rates_obj },
     { MP_OBJ_NEW_QSTR(MP_QSTR_update_walk), (mp_obj_t)&cspider_update_walk_obj },
     { MP_OBJ_NEW_QSTR(MP_QSTR_set_legs0), (mp_obj_t)&cspider_set_legs0_obj },
     { MP_OBJ_NEW_QSTR(MP_QSTR_begin_walk), (mp_obj_t)&cspider_begin_walk_obj },
+    { MP_OBJ_NEW_QSTR(MP_QSTR_end_walk), (mp_obj_t)&cspider_end_walk_obj },
 
     // body positioning functions
     { MP_OBJ_NEW_QSTR(MP_QSTR_xyz), (mp_obj_t)&cspider_xyz_obj },

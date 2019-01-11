@@ -282,6 +282,7 @@ extern const struct _mp_obj_module_t mp_module_machine;
 extern const struct _mp_obj_module_t mp_module_network;
 extern const struct _mp_obj_module_t mp_module_ymodem;
 extern const struct _mp_obj_module_t mp_module_cbots;
+extern const struct _mp_obj_module_t mp_module_cspider;
 
 #ifdef CONFIG_MICROPY_USE_REQUESTS
 extern const struct _mp_obj_module_t mp_module_requests;
@@ -348,6 +349,7 @@ extern const struct _mp_obj_module_t mp_module_bluetooth;
 	BUILTIN_MODULE_OTA \
 	BUILTIN_MODULE_BLUETOOTH \
     { MP_OBJ_NEW_QSTR(MP_QSTR_cbots), (mp_obj_t)&mp_module_cbots }, \
+    { MP_OBJ_NEW_QSTR(MP_QSTR_cspider), (mp_obj_t)&mp_module_cspider }, \
 
 #define MICROPY_PORT_BUILTIN_MODULE_WEAK_LINKS \
     { MP_OBJ_NEW_QSTR(MP_QSTR_binascii), (mp_obj_t)&mp_module_ubinascii }, \

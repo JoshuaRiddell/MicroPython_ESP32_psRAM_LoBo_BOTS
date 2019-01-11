@@ -1,3 +1,11 @@
+# MicroPython Out of the Bots Library
+
+A fork of the MicroPython Lobo port with support for Out of the Bots robot controller.
+
+For a comparison of this fork with the main branch see the link below.
+
+https://github.com/loboris/MicroPython_ESP32_psRAM_LoBo/compare/master...JoshuaRiddell:master
+
 # MicroPython for ESP32
 
 # with support for 4MB of psRAM

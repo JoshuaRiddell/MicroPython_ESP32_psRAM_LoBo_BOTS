@@ -259,8 +259,8 @@ bool cg_in_legs(float centroid_x, float centroid_y) {
             continue;
         }
 
-        support_base_points[idx][0] = centroid_x + (1. - support_scale_factor) * (centroid_x - legs[i][0]);
-        support_base_points[idx][1] = centroid_y + (1. - support_scale_factor) * (centroid_y - legs[i][1]);
+        support_base_points[idx][0] = centroid_x + support_scale_factor * (centroid_x - legs[i][0]);
+        support_base_points[idx][1] = centroid_y + support_scale_factor * (centroid_y - legs[i][1]);
 
         ++idx;
     }
@@ -334,14 +334,10 @@ void update_walk(void) {
                 legs[step_leg][1] = legs0[step_leg][1];
             }
 
-            // keep body on centroid
-            // centroid_x, centroid_y = self.get_centroid()
-            // self.x = centroid_x
-            // self.y = centroid_y
-
             if (state_tn >= step_time) {
                 step_state = STATE_STEP_IDLE;
                 step_state_t0 = walk_tn;
+                legs[step_leg][2] = legs0[step_leg][2];
             }
 
             break;

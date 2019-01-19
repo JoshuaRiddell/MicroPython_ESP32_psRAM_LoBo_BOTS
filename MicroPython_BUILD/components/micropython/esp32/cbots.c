@@ -50,11 +50,8 @@ static mp_machine_i2c_obj_t *i2c_obj;
 
 //--------------------------------------------------------------
 
-// set_servo takes servo index and angle in radians
-void set_servo(uint8_t idx, float angle) {
-    // apply zero position offsets
-    angle += zero_pos[idx];
-
+// set_servo takes servo index and angle in radians and writes the angle to the servo
+static inline void set_servo_raw(uint8_t idx, float angle) {
     // check we are not out of the reasonable range
     if (abs(angle) > max_angle) {
         printf("servo index: %d, out of range\n", idx);
@@ -82,6 +79,19 @@ void set_servo(uint8_t idx, float angle) {
 
 //--------------------------------------------------------------
 
+// set_servo takes servo index and angle in radians. It offsets the angle
+//              to centre the value then writes it to the servo
+void set_servo(uint8_t idx, float angle) {
+    // apply zero position offsets
+    angle += zero_pos[idx];
+
+    // set servo angle with centred value
+    set_servo_raw(idx, angle);    
+}
+
+//--------------------------------------------------------------
+
+// saves the already initialised i2c object for later
 STATIC mp_obj_t cbots_set_i2c(mp_obj_t i2c) {
     i2c_obj = i2c;
 
@@ -91,6 +101,7 @@ STATIC MP_DEFINE_CONST_FUN_OBJ_1(cbots_set_i2c_obj, cbots_set_i2c);
 
 //--------------------------------------------------------------
 
+// set servo calibration from passed mp list
 STATIC mp_obj_t cbots_set_servo_zero_pos(mp_obj_t zero_pos_list) {
     mp_obj_t *list_items;
 
@@ -107,7 +118,66 @@ STATIC MP_DEFINE_CONST_FUN_OBJ_1(cbots_set_servo_zero_pos_obj, cbots_set_servo_z
 
 //--------------------------------------------------------------
 
-STATIC mp_obj_t cbots_set_servo_rad(mp_obj_t servo_index, mp_obj_t angle) {
+// return tuple of all servo positions
+STATIC mp_obj_t cbots_servo_get_all() {
+    mp_obj_t angles[NUM_SERVOS];
+
+    for (uint8_t i = 0; i < NUM_SERVOS; ++i) {
+        angles[i] = mp_obj_new_float(current_pos[i]);
+    }
+
+    return mp_obj_new_tuple(NUM_SERVOS, angles);
+}
+STATIC MP_DEFINE_CONST_FUN_OBJ_0(cbots_servo_get_all_obj, cbots_servo_get_all);
+
+//--------------------------------------------------------------
+
+// get angle of servo index
+STATIC mp_obj_t cbots_servo_get_rad(mp_obj_t servo_index) {
+    uint8_t idx = mp_obj_get_int(servo_index);
+    return mp_obj_new_float(current_pos[idx]);
+}
+STATIC MP_DEFINE_CONST_FUN_OBJ_1(cbots_servo_get_rad_obj, cbots_servo_get_rad);
+
+//--------------------------------------------------------------
+
+// get angle of servo index
+STATIC mp_obj_t cbots_servo_get_deg(mp_obj_t servo_index) {
+    uint8_t idx = mp_obj_get_int(servo_index);
+    return mp_obj_new_float(current_pos[idx] * 180 / M_PI);
+}
+STATIC MP_DEFINE_CONST_FUN_OBJ_1(cbots_servo_get_deg_obj, cbots_servo_get_deg);
+
+//--------------------------------------------------------------
+
+// set servo degrees without centre offsetting
+STATIC mp_obj_t cbots_servo_set_deg_raw(mp_obj_t servo_index, mp_obj_t angle) {
+    mp_int_t idx = mp_obj_get_int(servo_index);
+    mp_float_t a_rad = mp_obj_get_float(angle);
+
+    set_servo_raw(idx, a_rad / M_PI * 180);
+
+    return mp_const_none;
+}
+STATIC MP_DEFINE_CONST_FUN_OBJ_2(cbots_servo_set_deg_raw_obj, cbots_servo_set_deg_raw);
+
+//--------------------------------------------------------------
+
+// set servo radians without centre offsetting
+STATIC mp_obj_t cbots_servo_set_rad_raw(mp_obj_t servo_index, mp_obj_t angle) {
+    mp_int_t idx = mp_obj_get_int(servo_index);
+    mp_float_t a_rad = mp_obj_get_float(angle);
+
+    set_servo_raw(idx, a_rad);
+
+    return mp_const_none;
+}
+STATIC MP_DEFINE_CONST_FUN_OBJ_2(cbots_servo_set_rad_raw_obj, cbots_servo_set_rad_raw);
+
+//--------------------------------------------------------------
+
+// set servo radians
+STATIC mp_obj_t cbots_servo_set_rad(mp_obj_t servo_index, mp_obj_t angle) {
     mp_int_t idx = mp_obj_get_int(servo_index);
     mp_float_t a_rad = mp_obj_get_float(angle);
 
@@ -115,16 +185,36 @@ STATIC mp_obj_t cbots_set_servo_rad(mp_obj_t servo_index, mp_obj_t angle) {
 
     return mp_const_none;
 }
-STATIC MP_DEFINE_CONST_FUN_OBJ_2(cbots_set_servo_rad_obj, cbots_set_servo_rad);
+STATIC MP_DEFINE_CONST_FUN_OBJ_2(cbots_servo_set_rad_obj, cbots_servo_set_rad);
+
+//--------------------------------------------------------------
+
+// set servo degrees
+STATIC mp_obj_t cbots_servo_set_deg(mp_obj_t servo_index, mp_obj_t angle) {
+    mp_int_t idx = mp_obj_get_int(servo_index);
+    mp_float_t a_rad = mp_obj_get_float(angle);
+
+    set_servo(idx, a_rad / M_PI * 180);
+
+    return mp_const_none;
+}
+STATIC MP_DEFINE_CONST_FUN_OBJ_2(cbots_servo_set_deg_obj, cbots_servo_set_deg);
 
 //--------------------------------------------------------------
 
 STATIC const mp_map_elem_t cbots_globals_table[] = {
     { MP_OBJ_NEW_QSTR(MP_QSTR___name__), MP_OBJ_NEW_QSTR(MP_QSTR_cbots) },
 
-    { MP_OBJ_NEW_QSTR(MP_QSTR_set_servo_rad), (mp_obj_t)&cbots_set_servo_rad_obj },
     { MP_OBJ_NEW_QSTR(MP_QSTR_set_i2c), (mp_obj_t)&cbots_set_i2c_obj },
     { MP_OBJ_NEW_QSTR(MP_QSTR_set_servo_zero_pos), (mp_obj_t)&cbots_set_servo_zero_pos_obj },
+
+    { MP_OBJ_NEW_QSTR(MP_QSTR_servo_get_all), (mp_obj_t)&cbots_servo_get_all_obj },
+    { MP_OBJ_NEW_QSTR(MP_QSTR_servo_get_rad), (mp_obj_t)&cbots_servo_get_rad_obj },
+    { MP_OBJ_NEW_QSTR(MP_QSTR_servo_get_deg), (mp_obj_t)&cbots_servo_get_deg_obj },
+    { MP_OBJ_NEW_QSTR(MP_QSTR_servo_set_deg_raw), (mp_obj_t)&cbots_servo_set_deg_raw_obj },
+    { MP_OBJ_NEW_QSTR(MP_QSTR_servo_set_rad_raw), (mp_obj_t)&cbots_servo_set_rad_raw_obj },
+    { MP_OBJ_NEW_QSTR(MP_QSTR_servo_set_rad), (mp_obj_t)&cbots_servo_set_rad_obj },
+    { MP_OBJ_NEW_QSTR(MP_QSTR_servo_set_deg), (mp_obj_t)&cbots_servo_set_deg_obj },
 };
 
 STATIC MP_DEFINE_CONST_DICT (

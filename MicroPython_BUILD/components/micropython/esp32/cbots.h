@@ -27,6 +27,7 @@
 
 #define NUM_SERVOS 16
 
+// set servo position with angle centre offset
 void set_servo(uint8_t idx, float angle);
 
 #endif  // INC_CBOTS_H
